@@ -5,6 +5,7 @@ import io
 import re
 import json
 import datetime
+import time
 
 try:
     from requests_html import HTMLSession
@@ -94,6 +95,9 @@ def get_data(ticker, start_date = None, end_date = None, index_as_date = True,
     data = resp.json()
     
     # get open / high / low / close data
+    quote_data = data["chart"]["result"][0]["indicators"]["quote"][0]
+    if not quote_data:
+        return None
     frame = pd.DataFrame(data["chart"]["result"][0]["indicators"]["quote"][0])
 
     # get the date info
@@ -289,17 +293,27 @@ def get_quote_table(ticker , dict_result = True, headers = {'User-agent': 'Mozil
     '''
 
     site = "https://finance.yahoo.com/quote/" + ticker + "?p=" + ticker
-    
-    tables = pd.read_html(requests.get(site, headers=headers).text)
-    
-    data = tables[0].append(tables[1])
+    resp = requests.get(site, headers=headers).text
+    while 'Will be' in resp:
+        time.sleep(1)
+        resp = requests.get(site, headers=headers).text
+    tables = pd.read_html(resp)
+   
+    if len(tables) > 1:
+        data = pd.concat([tables[0], tables[3]])
+    else:
+        data = tables[0]
+        
+    if len(data.columns) > 2:
+        print("[*] Found extra cols", data.columns, 'so skipping')
+        return None
 
     data.columns = ["attribute" , "value"]
     
     quote_price = pd.DataFrame(["Quote Price", get_live_price(ticker)]).transpose()
     quote_price.columns = data.columns.copy()
     
-    data = data.append(quote_price)
+    data = pd.concat([data, quote_price])
     
     data = data.sort_values("attribute")
     
@@ -333,7 +347,7 @@ def get_stats(ticker, headers = {'User-agent': 'Mozilla/5.0'}):
     
     table = tables[0]
     for elt in tables[1:]:
-        table = table.append(elt)
+        table = pd.concat([table, elt])
 
     table.columns = ["Attribute" , "Value"]
     
@@ -353,12 +367,19 @@ def get_stats_valuation(ticker, headers = {'User-agent': 'Mozilla/5.0'}):
     stats_site = "https://finance.yahoo.com/quote/" + ticker + \
                  "/key-statistics?p=" + ticker
     
-    
-    tables = pd.read_html(requests.get(stats_site, headers=headers).text)
-    
-    tables = [table for table in tables if "Trailing P/E" in table.iloc[:,0].tolist()]
-    
-    
+    tables = []
+    count = 0
+    while not tables:
+        count += 1
+        _txt = requests.get(stats_site, headers=headers).text
+        tables = pd.read_html(_txt)
+        tables = [table for table in tables if "Trailing P/E" in table.iloc[:,0].tolist()]
+        if tables or count > 2:
+            break
+        time.sleep(1)
+   
+    if not tables:
+        return None 
     table = tables[0].reset_index(drop = True)
     
     return table
@@ -575,7 +596,8 @@ def get_live_price(ticker):
     '''    
     
     df = get_data(ticker, end_date = pd.Timestamp.today() + pd.DateOffset(10))
-    
+    if df is None:
+        return None 
     
     return df.close[-1]
     
@@ -1013,6 +1035,8 @@ def get_company_info(ticker):
     site = f"https://finance.yahoo.com/quote/{ticker}/profile?p={ticker}"
     json_info = _parse_json(site)
     json_info = json_info["assetProfile"]
+    if not json_info:
+        return None
     info_frame = pd.DataFrame.from_dict(json_info,
                                         orient="index",
                                         columns=["Value"])

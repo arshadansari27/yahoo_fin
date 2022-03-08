@@ -300,7 +300,7 @@ def get_quote_table(ticker , dict_result = True, headers = {'User-agent': 'Mozil
     tables = pd.read_html(resp)
    
     if len(tables) > 1:
-        data = pd.concat([tables[0], tables[3]])
+        data = pd.concat([tables[0], tables[1]])
     else:
         data = tables[0]
         
